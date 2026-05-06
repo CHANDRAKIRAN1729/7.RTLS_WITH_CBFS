@@ -1,0 +1,23 @@
+*__pycache__*
+*tmp*
+*logs*
+*_figs*
+*CMakeLists.txt
+*package.xml
+*venv*
+*activate
+
+/ablation_results
+/ablation_results_fast
+/model_params/panda_10k/cbf_ablation
+/model_params/panda_10k/cbf_snapshots
+/CBF_Implementation_Plan.pdf
+/CBF1.pdf
+/CBF2.pdf
+/TrainingCBF.pdf
+/src/cbf_ablation_study.sh
+/src/cbf_fast_ablation.sh
+/src/cbf_diagnostic.py
+
+# Large model files that exceed GitHub's 100MB limit
+/model_params/**/*.pt
