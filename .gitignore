@@ -1,25 +1,66 @@
-*__pycache__*
+# =========================
+# Python
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+
+# =========================
+# Virtual environments
+# =========================
+*venv*/
+*activate
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Data folder (excluded)
+# =========================
+/data/
+
+# =========================
+# Model checkpoints (excluded)
+# =========================
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.h5
+/model_params/**/snapshots/
+/model_params/**/snapshots_obs/
+/model_params/**/cbf_snapshots/
+
+# =========================
+# TensorBoard runs (large binary logs)
+# =========================
+/model_params/**/runs/
+/model_params/**/runs_cbf/
+/model_params/**/runs_obs/
+
+# =========================
+# CBF generated data (large .pt files)
+# =========================
+/cbf_data/
+
+# =========================
+# Ablation results
+# =========================
+/ablation_results/
+/ablation_results_fast/
+/model_params/panda_10k/cbf_ablation/
+
+# =========================
+# Temp / Misc
+# =========================
 *tmp*
 *logs*
 *_figs*
 *CMakeLists.txt
 *package.xml
-*venv*
-*activate
-
-/ablation_results
-/ablation_results_fast
-/model_params/panda_10k/cbf_ablation
-/model_params/panda_10k/cbf_snapshots
-/CBF_Implementation_Plan.pdf
-/CBF1.pdf
-/CBF2.pdf
-/TrainingCBF.pdf
-/src/cbf_ablation_study.sh
-/src/cbf_fast_ablation.sh
-/src/cbf_diagnostic.py
-/src/analyze_barrier_values.py
-
-
-# Large model files that exceed GitHub's 100MB limit
-/model_params/**/*.pt
+pyrightconfig.json

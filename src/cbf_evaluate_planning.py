@@ -13,10 +13,6 @@ Key change from baseline:
     CBF:       L_nominal = L_goal + λ_prior·L_prior  (NO collision loss)
                optimizer.step()  →  z_nom
                z_safe = CBF_correction(z_nom)  →  z ← z_safe
-
-References:
-    - CBF2.pdf Eqs 4-10: Safe latent update
-    - Implementation Plan Sections 7-9: Runtime integration and evaluation
 """
 
 from __future__ import print_function
@@ -152,7 +148,7 @@ def plan_with_cbf(model, cbf_net,
 
         # z now contains z_{k+1}^{nom}
 
-        # --- CBF SAFETY FILTER (CBF2 Eqs 4-10) ---
+        # --- CBF SAFETY FILTER ---
         if cbf_net is not None and len(obstacles_raw) > 0:
             # Apply CBF correction for each obstacle, take the most conservative
             max_lambda = 0.0

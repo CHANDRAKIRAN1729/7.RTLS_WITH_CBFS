@@ -66,12 +66,12 @@ LAMBDA_UNSAFE = 1.0          # weight for unsafe sign loss
 LAMBDA_DECREASE = 1.0        # weight for CBF decrease condition
 CBF_ALPHA = 1.0              # barrier decay rate — always 1
 CBF_DELTA_T = 1.0            # time step
-SAFETY_MARGIN = 0.0          # margin γ: forces B ≥ γ for safe, B ≤ -γ for unsafe
+SAFETY_MARGIN = 1.0          # margin γ: forces B ≥ γ for safe, B ≤ -γ for unsafe
 
 # =============================================================================
 # Transition Data Generation
 # =============================================================================
-NUM_TRANSITION_SCENARIOS = 5000   # number of planning scenarios to run
+NUM_TRANSITION_SCENARIOS = 15000  # number of planning scenarios to run (~1M transitions)
 TRANSITION_MAX_STEPS = 300        # max optimization steps per scenario
 TRANSITION_PLANNING_LR = 0.03    # must match PLANNING_LR (Adam lr)
 TRANSITION_LAMBDA_PRIOR = 0.01   # must match LAMBDA_PRIOR

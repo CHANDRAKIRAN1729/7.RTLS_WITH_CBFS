@@ -4,8 +4,6 @@ CBF Datasets — PyTorch Dataset classes for dual-batch CBF training.
 Two dataset types:
     1. CBFStateLabelDataset:  (z, obs, label) for safe/unsafe sign losses
     2. CBFTransitionDataset:  (z_k, z_nom, obs) for CBF decrease condition
-
-Reference: CBF_Implementation_Plan Section 5.3 (dual-batch training)
 """
 
 import torch

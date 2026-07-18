@@ -9,8 +9,6 @@ Processing:
     2. Extract obstacle [x, y, h, r] and collision label
     3. Split into train/val/test with scenario-level separation
     4. Save as .pt tensors
-
-Reference: TrainingCBF Section 2A; Implementation Plan Section 3.1
 """
 
 from __future__ import print_function
@@ -164,8 +162,6 @@ def generate_boundary_samples(model, robot, robo3d, mean_train, std_train,
 
     Samples random configurations and obstacles, keeps those with small
     positive distance (near-miss) for enriched boundary coverage.
-
-    Reference: TrainingCBF Section 2C; Implementation Plan Section 3.4
     """
     logging.info(f"Generating boundary samples (target: {num_samples}, threshold: {distance_threshold}m)...")
 

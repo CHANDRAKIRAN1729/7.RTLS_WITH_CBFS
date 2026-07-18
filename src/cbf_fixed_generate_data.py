@@ -1,12 +1,14 @@
 """
-CBF Transition Data Generation — Run Goal+Prior-only planner and record transitions.
+Fixed-Obstacle CBF Data Generation.
 
-Generates (z_k, z_{k+1}^nom, obs) transition pairs by running the nominal planner
-(Goal + Prior losses only, NO collision loss) on random scenarios.
+Generates transition + state-label data using ONE fixed obstacle and ONE fixed goal.
+Only the start configuration varies across scenarios.
 
-Critical: The transitions MUST come from the Goal+Prior-only planner because that is
-what the CBF will see at inference time. Training on transitions from a different
-planner would create a distribution mismatch that breaks the CBF guarantees.
+Outputs (all into cbf_fixed_data/):
+    - transitions_train.pt: {z_k, z_nom, safe_k, safe_nom}   (NO obs)
+    - transitions_val.pt:   same format
+    - state_labels_train.pt: {z, label}                       (NO obs)
+    - state_labels_val.pt:   same format
 """
 
 from __future__ import print_function
@@ -24,11 +26,10 @@ warnings.filterwarnings('ignore', category=FutureWarning, module='torch')
 
 from vae import VAE
 from robot_state_dataset import RobotStateDataset
-from robot_obs_dataset import RobotObstacleDataset
 from sim.panda import Panda
 from sim.robot3d import Robo3D
-from evaluate_planning import ObstacleScenarioGenerator
 import cbf_config as cfg
+import cbf_fixed_config as fcfg
 
 logging.basicConfig(
     format='%(asctime)s %(levelname)-8s %(message)s',
@@ -67,18 +68,15 @@ def get_normalization_stats():
 
 def run_nominal_planner_and_record_transitions(
         model, robot, robo3d,
-        q_start, e_start, e_target, obstacles_raw,
+        q_start, e_start, e_target, obstacle_xyhr,
         mean_train_t, std_train_t,
         device, planning_lr, lambda_prior, max_steps):
     """
-    Run the Goal+Prior-only planner and record (z_k, z_{k+1}^nom, obs) at each step.
-
-    This is the NOMINAL planner — no collision loss. The transitions capture
-    how the planner would move through latent space if unconstrained by safety,
-    which is exactly what the CBF will see at inference time.
+    Run the Goal+Prior-only planner and record transitions.
+    Uses the FIXED obstacle for collision checking.
 
     Returns:
-        transitions: list of dicts with 'z_k', 'z_nom', 'obs', 'safe_k', 'safe_nom'
+        transitions: list of dicts with 'z_k', 'z_nom', 'safe_k', 'safe_nom' (no obs)
     """
     # Normalize start state
     x_start = torch.cat([q_start, e_start], dim=1)  # [1, 10]
@@ -92,7 +90,6 @@ def run_nominal_planner_and_record_transitions(
     optimizer = optim.Adam([z], lr=planning_lr)
 
     transitions = []
-    obstacles_xyhr = [obs.tolist() for obs in obstacles_raw]
 
     for step in range(max_steps):
         # Save z_k BEFORE the optimizer step
@@ -112,7 +109,7 @@ def run_nominal_planner_and_record_transitions(
         L_nominal = L_goal + lambda_prior * L_prior
 
         # Check if goal reached
-        if L_goal.item() < cfg.SUCCESS_THRESHOLD:
+        if L_goal.item() < fcfg.SUCCESS_THRESHOLD:
             break
 
         L_nominal.backward()
@@ -121,26 +118,25 @@ def run_nominal_planner_and_record_transitions(
         # z now contains z_{k+1}^nom
         z_after = z.data.clone()
 
-        # Check collision status for z_before and z_after using Robo3D
+        # Check collision status using Robo3D with the FIXED obstacle
         with torch.no_grad():
             # Decode z_before
             x_before_norm = model.decoder(z_before)
             x_before = x_before_norm * std_train_t[:, :10] + mean_train_t[:, :10]
             q_before = x_before[:, :7].cpu().numpy()[0]
             q_before_deg = np.degrees(q_before).tolist()
-            safe_k = 0.0 if robo3d.check_for_collision(q_before_deg, obstacles_xyhr) else 1.0
+            safe_k = 0.0 if robo3d.check_for_collision(q_before_deg, [obstacle_xyhr]) else 1.0
 
             # Decode z_after
             x_after_norm = model.decoder(z_after)
             x_after = x_after_norm * std_train_t[:, :10] + mean_train_t[:, :10]
             q_after = x_after[:, :7].cpu().numpy()[0]
             q_after_deg = np.degrees(q_after).tolist()
-            safe_nom = 0.0 if robo3d.check_for_collision(q_after_deg, obstacles_xyhr) else 1.0
+            safe_nom = 0.0 if robo3d.check_for_collision(q_after_deg, [obstacle_xyhr]) else 1.0
 
         transitions.append({
             'z_k': z_before.cpu().squeeze(0),
             'z_nom': z_after.cpu().squeeze(0),
-            'obs': torch.tensor(obstacles_raw[0], dtype=torch.float32),  # first obstacle
             'safe_k': safe_k,
             'safe_nom': safe_nom,
         })
@@ -149,17 +145,14 @@ def run_nominal_planner_and_record_transitions(
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate CBF transition-pair dataset')
+    parser = argparse.ArgumentParser(description='Generate FIXED-obstacle CBF data')
     parser.add_argument('--no_cuda', action='store_true', default=False)
-    parser.add_argument('--seed', type=int, default=cfg.SEED)
-    parser.add_argument('--num_scenarios', type=int, default=cfg.NUM_TRANSITION_SCENARIOS,
-                        help='Number of planning scenarios to run')
-    parser.add_argument('--max_steps', type=int, default=cfg.TRANSITION_MAX_STEPS)
-    parser.add_argument('--planning_lr', type=float, default=cfg.TRANSITION_PLANNING_LR)
-    parser.add_argument('--lambda_prior', type=float, default=cfg.TRANSITION_LAMBDA_PRIOR)
-    parser.add_argument('--num_obstacles', type=int, default=1)
-    parser.add_argument('--val_split', type=float, default=0.1,
-                        help='Fraction of scenarios for validation')
+    parser.add_argument('--seed', type=int, default=fcfg.SEED)
+    parser.add_argument('--num_scenarios', type=int, default=fcfg.NUM_SCENARIOS)
+    parser.add_argument('--max_steps', type=int, default=fcfg.MAX_STEPS)
+    parser.add_argument('--planning_lr', type=float, default=fcfg.PLANNING_LR)
+    parser.add_argument('--lambda_prior', type=float, default=fcfg.LAMBDA_PRIOR)
+    parser.add_argument('--val_split', type=float, default=0.1)
     args = parser.parse_args()
 
     # Setup
@@ -169,7 +162,7 @@ def main():
     logging.info(f"Using device: {device}")
 
     # Create output directory
-    os.makedirs(cfg.CBF_DATA_DIR, exist_ok=True)
+    os.makedirs(fcfg.FIXED_DATA_DIR, exist_ok=True)
 
     # Load models
     model = load_frozen_vae(device)
@@ -181,45 +174,39 @@ def main():
     robot = Panda()
     robot.to(device)
     robo3d = Robo3D(Panda())
-    scenario_gen = ObstacleScenarioGenerator(robot)
 
     q_min_rad = robot.joint_min_limits_tensor * (torch.pi / 180.0)
     q_max_rad = robot.joint_max_limits_tensor * (torch.pi / 180.0)
 
+    # Fixed obstacle and goal
+    obstacle_xyhr = fcfg.FIXED_OBSTACLE
+    q_target = torch.tensor([fcfg.FIXED_GOAL_Q_RAD], dtype=torch.float32, device=device)
+    e_target = robot.FK(q_target.clone(), device, rad=True)
+
+    logging.info(f"\n{'=' * 60}")
+    logging.info(f"FIXED-OBSTACLE DATA GENERATION")
+    logging.info(f"  Obstacle: {obstacle_xyhr}")
+    logging.info(f"  Goal q:   {fcfg.FIXED_GOAL_Q_RAD}")
+    logging.info(f"  Goal ee:  {e_target.cpu().numpy()[0].tolist()}")
+    logging.info(f"  Scenarios: {args.num_scenarios}")
+    logging.info(f"{'=' * 60}\n")
+
     # =========================================================================
     # Generate transitions
     # =========================================================================
-    logging.info(f"\n{'=' * 60}")
-    logging.info(f"Generating transition pairs from {args.num_scenarios} scenarios")
-    logging.info(f"Planner: Goal + Prior only (lr={args.planning_lr}, λ_prior={args.lambda_prior})")
-    logging.info(f"{'=' * 60}\n")
-
     all_transitions = []
-    scenario_boundaries = [0]  # track where each scenario's transitions start
+    scenario_boundaries = [0]
     start_time = time.time()
 
     for scenario_id in range(args.num_scenarios):
-        # Sample random start and target configurations
+        # Random start only — obstacle and goal are FIXED
         q_start = torch.rand(1, 7, device=device) * (q_max_rad - q_min_rad) + q_min_rad
         e_start = robot.FK(q_start.clone(), device, rad=True)
-        q_target = torch.rand(1, 7, device=device) * (q_max_rad - q_min_rad) + q_min_rad
-        e_target = robot.FK(q_target.clone(), device, rad=True)
-
-        # Generate obstacles
-        obstacles_raw = scenario_gen.generate_scenario(
-            q_start.cpu().numpy()[0],
-            e_start.cpu().numpy()[0],
-            e_target.cpu().numpy()[0],
-            num_obstacles=args.num_obstacles
-        )
-
-        if len(obstacles_raw) == 0:
-            continue
 
         # Run nominal planner and record transitions
         transitions = run_nominal_planner_and_record_transitions(
             model, robot, robo3d,
-            q_start, e_start, e_target, obstacles_raw,
+            q_start, e_start, e_target, obstacle_xyhr,
             mean_train_t, std_train_t,
             device, args.planning_lr, args.lambda_prior, args.max_steps
         )
@@ -243,11 +230,10 @@ def main():
         return
 
     # =========================================================================
-    # Collate into tensors
+    # Collate into tensors (NO obs field)
     # =========================================================================
     z_k_all = torch.stack([t['z_k'] for t in all_transitions])
     z_nom_all = torch.stack([t['z_nom'] for t in all_transitions])
-    obs_all = torch.stack([t['obs'] for t in all_transitions])
     safe_k_all = torch.tensor([t['safe_k'] for t in all_transitions], dtype=torch.float32)
     safe_nom_all = torch.tensor([t['safe_nom'] for t in all_transitions], dtype=torch.float32)
 
@@ -265,13 +251,12 @@ def main():
                  f"unsafe={unsafe_nom_count} ({unsafe_nom_count/total*100:.1f}%)")
 
     # =========================================================================
-    # Split by scenario (NOT by individual transition — avoid data leakage)
+    # Split by scenario
     # =========================================================================
     num_scenarios = len(scenario_boundaries) - 1
     n_val_scenarios = max(1, int(num_scenarios * args.val_split))
     n_train_scenarios = num_scenarios - n_val_scenarios
 
-    # Shuffle scenario indices
     scenario_perm = torch.randperm(num_scenarios).tolist()
     train_scenarios = scenario_perm[:n_train_scenarios]
     val_scenarios = scenario_perm[n_train_scenarios:]
@@ -288,71 +273,56 @@ def main():
     val_idx = gather_scenario_indices(val_scenarios)
 
     # =========================================================================
-    # Save transition data
+    # Save transition data (NO obs)
     # =========================================================================
     train_data = {
         'z_k': z_k_all[train_idx],
         'z_nom': z_nom_all[train_idx],
-        'obs': obs_all[train_idx],
         'safe_k': safe_k_all[train_idx],
         'safe_nom': safe_nom_all[train_idx],
     }
     val_data = {
         'z_k': z_k_all[val_idx],
         'z_nom': z_nom_all[val_idx],
-        'obs': obs_all[val_idx],
         'safe_k': safe_k_all[val_idx],
         'safe_nom': safe_nom_all[val_idx],
     }
 
-    torch.save(train_data, cfg.TRANSITIONS_TRAIN)
-    logging.info(f"Saved training transitions: {len(train_idx)} → {cfg.TRANSITIONS_TRAIN}")
+    torch.save(train_data, fcfg.FIXED_TRANSITIONS_TRAIN)
+    logging.info(f"Saved training transitions: {len(train_idx)} → {fcfg.FIXED_TRANSITIONS_TRAIN}")
 
-    torch.save(val_data, cfg.TRANSITIONS_VAL)
-    logging.info(f"Saved validation transitions: {len(val_idx)} → {cfg.TRANSITIONS_VAL}")
+    torch.save(val_data, fcfg.FIXED_TRANSITIONS_VAL)
+    logging.info(f"Saved validation transitions: {len(val_idx)} → {fcfg.FIXED_TRANSITIONS_VAL}")
 
     # =========================================================================
-    # Extract and save state-label data from the SAME rollouts
-    #
-    # Each transition gives two state-label samples:
-    #   (z_k, obs, safe_k)  and  (z_nom, obs, safe_nom)
-    #
-    # Label convention: safe_k=1 → label=0 (safe), safe_k=0 → label=1 (unsafe)
+    # Extract and save state-label data (NO obs)
     # =========================================================================
     def extract_state_labels(indices):
         z_k_sub = z_k_all[indices]
         z_nom_sub = z_nom_all[indices]
-        obs_sub = obs_all[indices]
         safe_k_sub = safe_k_all[indices]
         safe_nom_sub = safe_nom_all[indices]
 
-        # Concatenate z_k and z_nom as separate state samples
         z_states = torch.cat([z_k_sub, z_nom_sub], dim=0)
-        obs_states = torch.cat([obs_sub, obs_sub], dim=0)
         # Convert: safe=1 → label=0, unsafe=0 → label=1
         labels = torch.cat([1.0 - safe_k_sub, 1.0 - safe_nom_sub], dim=0)
 
-        # Remove exact duplicates (z_nom at step k == z_k at step k+1 within
-        # the same trajectory, so many will be duplicated). We deduplicate by
-        # keeping unique rows. This is approximate but reduces redundancy.
-        # For large datasets the overlap is acceptable so we skip dedup for speed.
-
-        return {'z': z_states, 'obs': obs_states, 'label': labels}
+        return {'z': z_states, 'label': labels}
 
     train_state_labels = extract_state_labels(train_idx)
     val_state_labels = extract_state_labels(val_idx)
 
-    torch.save(train_state_labels, cfg.STATE_LABELS_TRAIN)
+    torch.save(train_state_labels, fcfg.FIXED_STATE_LABELS_TRAIN)
     n_safe_train = (train_state_labels['label'] == 0).sum().item()
     n_unsafe_train = (train_state_labels['label'] == 1).sum().item()
     logging.info(f"Saved training state-labels: {len(train_state_labels['z'])} "
-                 f"(safe={n_safe_train}, unsafe={n_unsafe_train}) → {cfg.STATE_LABELS_TRAIN}")
+                 f"(safe={n_safe_train}, unsafe={n_unsafe_train}) → {fcfg.FIXED_STATE_LABELS_TRAIN}")
 
-    torch.save(val_state_labels, cfg.STATE_LABELS_VAL)
+    torch.save(val_state_labels, fcfg.FIXED_STATE_LABELS_VAL)
     n_safe_val = (val_state_labels['label'] == 0).sum().item()
     n_unsafe_val = (val_state_labels['label'] == 1).sum().item()
     logging.info(f"Saved validation state-labels: {len(val_state_labels['z'])} "
-                 f"(safe={n_safe_val}, unsafe={n_unsafe_val}) → {cfg.STATE_LABELS_VAL}")
+                 f"(safe={n_safe_val}, unsafe={n_unsafe_val}) → {fcfg.FIXED_STATE_LABELS_VAL}")
 
     logging.info(f"\n{'=' * 60}")
     logging.info("Data generation complete!")
@@ -364,4 +334,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
